@@ -41,6 +41,7 @@
 #include <unordered_set>
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
 
 namespace
 {
@@ -118,6 +119,31 @@ namespace vrpn_client_ros
     nh->get_parameter("use_server_time", use_server_time_);
     nh->get_parameter("broadcast_tf", broadcast_tf_);
 
+    if (!nh->has_parameter("mocap_unit"))
+    {
+      nh->declare_parameter("mocap_unit", "mm");
+    }
+    std::string mocap_unit;
+    nh->get_parameter("mocap_unit", mocap_unit);
+    if (mocap_unit == "mm")
+    {
+      linear_scale_ = 0.001;
+    }
+    else if (mocap_unit == "m")
+    {
+      linear_scale_ = 1.0;
+    }
+    else
+    {
+      RCLCPP_FATAL_STREAM(
+        nh->get_logger(),
+        "Invalid mocap_unit '" << mocap_unit << "'. Expected 'mm' or 'm'.");
+      throw std::runtime_error("Invalid mocap_unit");
+    }
+    RCLCPP_INFO_STREAM(
+      nh->get_logger(),
+      "Using mocap_unit='" << mocap_unit << "', linear_scale=" << linear_scale_);
+
     pose_msg_.header.frame_id = frame_id;
     // pose_msg_.header.frame_id = twist_msg_.header.frame_id = accel_msg_.header.frame_id = transform_stamped_.header.frame_id = frame_id;
 
@@ -189,9 +215,9 @@ namespace vrpn_client_ros
         tracker->pose_msg_.header.stamp = nh->now();
       }
 
-      tracker->pose_msg_.pose.pose.position.x = tracker_pose.pos[0] / 1000;
-      tracker->pose_msg_.pose.pose.position.y = tracker_pose.pos[1] / 1000;
-      tracker->pose_msg_.pose.pose.position.z = tracker_pose.pos[2] / 1000;
+      tracker->pose_msg_.pose.pose.position.x = tracker_pose.pos[0] * tracker->linear_scale_;
+      tracker->pose_msg_.pose.pose.position.y = tracker_pose.pos[1] * tracker->linear_scale_;
+      tracker->pose_msg_.pose.pose.position.z = tracker_pose.pos[2] * tracker->linear_scale_;
       tracker->pose_msg_.pose.pose.orientation.x = tracker_pose.quat[0];
       tracker->pose_msg_.pose.pose.orientation.y = tracker_pose.quat[1];
       tracker->pose_msg_.pose.pose.orientation.z = tracker_pose.quat[2];
@@ -224,9 +250,9 @@ namespace vrpn_client_ros
         tracker->twist_msg_.header.stamp = nh->now();
       }
 
-      tracker->twist_msg_.twist.linear.x = tracker_twist.vel[0] / 1000; // mm/s to m/s
-      tracker->twist_msg_.twist.linear.y = tracker_twist.vel[1] / 1000;
-      tracker->twist_msg_.twist.linear.z = tracker_twist.vel[2] / 1000;
+      tracker->twist_msg_.twist.linear.x = tracker_twist.vel[0] * tracker->linear_scale_;
+      tracker->twist_msg_.twist.linear.y = tracker_twist.vel[1] * tracker->linear_scale_;
+      tracker->twist_msg_.twist.linear.z = tracker_twist.vel[2] * tracker->linear_scale_;
 
       double roll, pitch, yaw;
       tf2::Matrix3x3 rot_mat(
@@ -264,9 +290,9 @@ namespace vrpn_client_ros
         tracker->accel_msg_.header.stamp = nh->now();
       }
 
-      tracker->accel_msg_.accel.linear.x = tracker_accel.acc[0] / 1000;
-      tracker->accel_msg_.accel.linear.y = tracker_accel.acc[1] / 1000;
-      tracker->accel_msg_.accel.linear.z = tracker_accel.acc[2] / 1000;
+      tracker->accel_msg_.accel.linear.x = tracker_accel.acc[0] * tracker->linear_scale_;
+      tracker->accel_msg_.accel.linear.y = tracker_accel.acc[1] * tracker->linear_scale_;
+      tracker->accel_msg_.accel.linear.z = tracker_accel.acc[2] * tracker->linear_scale_;
 
       double roll, pitch, yaw;
       tf2::Matrix3x3 rot_mat(
@@ -293,6 +319,7 @@ namespace vrpn_client_ros
     nh->declare_parameter("use_server_time", false);
     //nh->declare_parameter("broadcast_tf", true);
     nh->declare_parameter("refresh_tracker_frequency", 1.0);
+    nh->declare_parameter("mocap_unit", "mm");
 
     std::vector<std::string> param_tracker_names;
     nh->declare_parameter("trackers", param_tracker_names);

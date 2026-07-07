@@ -85,6 +85,7 @@ namespace vrpn_client_ros
     rclcpp::Publisher<geometry_msgs::msg::AccelStamped>::SharedPtr accel_pub_;
     rclcpp::Node::SharedPtr output_nh_;
     bool use_server_time_, broadcast_tf_;
+    double linear_scale_;
     std::string tracker_name;
 
     rclcpp::TimerBase::SharedPtr mainloop_timer;
