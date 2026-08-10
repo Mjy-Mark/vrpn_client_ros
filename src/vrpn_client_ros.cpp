@@ -169,7 +169,7 @@ namespace vrpn_client_ros
     tracker_remote_->mainloop();
   }
 
-  rclcpp::Time VrpnTrackerRos::stamp_from_vrpn_time(const timeval &msg_time)
+  rclcpp::Time VrpnTrackerRos::stamp_twist_from_vrpn_time(const timeval &msg_time)
   {
     const rclcpp::Time ros_now = output_nh_->get_clock()->now();
     if (!use_server_time_)
@@ -181,39 +181,43 @@ namespace vrpn_client_ros
       static_cast<std::int64_t>(msg_time.tv_sec) * 1000000000LL +
       static_cast<std::int64_t>(msg_time.tv_usec) * 1000LL;
 
-    // Estimate one shared server-to-ROS clock offset for pose, twist and accel.
-    // Until the estimate is ready, publish with ROS time so that all topics
-    // remain in the same time domain instead of exposing raw server time.
+    // The Nokov twist stream has a different absolute time origin from pose.
+    // Estimate a twist-only offset for this tracker.  During calibration,
+    // publish receive time instead of exposing the invalid raw server stamp.
     constexpr std::size_t offset_sample_count = 600;
-    if (!server_time_offset_ready_)
+    if (!twist_time_offset_ready_)
     {
-      server_time_offset_sum_ns_ +=
+      twist_time_offset_sum_ns_ +=
         static_cast<long double>(server_time_ns - ros_now.nanoseconds());
-      ++server_time_offset_sample_count_;
+      ++twist_time_offset_sample_count_;
 
-      if (server_time_offset_sample_count_ < offset_sample_count)
+      if (twist_time_offset_sample_count_ < offset_sample_count)
       {
         return ros_now;
       }
 
-      server_to_ros_offset_ns_ = static_cast<std::int64_t>(std::llround(
-        server_time_offset_sum_ns_ /
-        static_cast<long double>(server_time_offset_sample_count_)));
-      server_time_offset_ready_ = true;
+      twist_to_ros_offset_ns_ = static_cast<std::int64_t>(std::llround(
+        twist_time_offset_sum_ns_ /
+        static_cast<long double>(twist_time_offset_sample_count_)));
+      twist_time_offset_ready_ = true;
 
       RCLCPP_INFO_STREAM(
         output_nh_->get_logger(),
-        "Tracker '" << tracker_name << "' server-to-ROS time offset: "
-                    << static_cast<double>(server_to_ros_offset_ns_) * 1e-9 << " s");
+        "Tracker '" << tracker_name << "' twist-to-ROS time offset: "
+                    << static_cast<double>(twist_to_ros_offset_ns_) * 1e-9 << " s");
     }
 
     return rclcpp::Time(
-      server_time_ns - server_to_ros_offset_ns_, ros_now.get_clock_type());
+      server_time_ns - twist_to_ros_offset_ns_, ros_now.get_clock_type());
   }
 
   void VRPN_CALLBACK VrpnTrackerRos::handle_pose(void *userData, const vrpn_TRACKERCB tracker_pose)
   {
     VrpnTrackerRos *tracker = static_cast<VrpnTrackerRos *>(userData);
+
+    // wmywmy
+    static int count = 0;
+    static double sum_time = 0.0;
 
     rclcpp::Node::SharedPtr nh = tracker->output_nh_;
     
@@ -224,7 +228,35 @@ namespace vrpn_client_ros
 
     if (tracker->pose_pub_->get_subscription_count() > 0)
     {
-      tracker->pose_msg_.header.stamp = tracker->stamp_from_vrpn_time(tracker_pose.msg_time);
+      if (tracker->use_server_time_)
+      {
+        // wmywmy
+        if (count < 600)
+        {
+          tracker->pose_msg_.header.stamp.sec = tracker_pose.msg_time.tv_sec;
+          tracker->pose_msg_.header.stamp.nanosec = tracker_pose.msg_time.tv_usec * 1000;
+          sum_time += (rclcpp::Time(tracker->pose_msg_.header.stamp) - nh->get_clock()->now()).seconds();
+          // std::cout << " | sum_time = " << sum_time << std::endl;
+          count++;
+          return;
+        }  else if (count == 600){
+          sum_time /= (double)count;
+          // std::cout << "Duration = sum_time"  << sum_time << std::endl;
+          count++;
+          return;
+        } else {
+          tracker->pose_msg_.header.stamp.sec = tracker_pose.msg_time.tv_sec;
+          tracker->pose_msg_.header.stamp.nanosec = tracker_pose.msg_time.tv_usec * 1000;
+          double final_time =  rclcpp::Time(tracker->pose_msg_.header.stamp).seconds() - sum_time;
+          tracker->pose_msg_.header.stamp.set__sec((int32_t)final_time);
+          tracker->pose_msg_.header.stamp.set__nanosec((uint32_t)((final_time - (int32_t)final_time) * 1e9));
+          // std::cout << "dt = " << sum_time << std::endl;
+        }
+      }
+      else
+      {
+        tracker->pose_msg_.header.stamp = nh->now();
+      }
 
       tracker->pose_msg_.pose.pose.position.x = tracker_pose.pos[0] * tracker->linear_scale_;
       tracker->pose_msg_.pose.pose.position.y = tracker_pose.pos[1] * tracker->linear_scale_;
@@ -251,7 +283,8 @@ namespace vrpn_client_ros
 
     if (tracker->twist_pub_->get_subscription_count() > 0)
     {
-      tracker->twist_msg_.header.stamp = tracker->stamp_from_vrpn_time(tracker_twist.msg_time);
+      tracker->twist_msg_.header.stamp =
+        tracker->stamp_twist_from_vrpn_time(tracker_twist.msg_time);
 
       tracker->twist_msg_.twist.linear.x = tracker_twist.vel[0] * tracker->linear_scale_;
       tracker->twist_msg_.twist.linear.y = tracker_twist.vel[1] * tracker->linear_scale_;
@@ -283,7 +316,15 @@ namespace vrpn_client_ros
 
     if (tracker->accel_pub_->get_subscription_count() > 0)
     {
-      tracker->accel_msg_.header.stamp = tracker->stamp_from_vrpn_time(tracker_accel.msg_time);
+      if (tracker->use_server_time_)
+      {
+        tracker->accel_msg_.header.stamp.sec = tracker_accel.msg_time.tv_sec;
+        tracker->accel_msg_.header.stamp.nanosec = tracker_accel.msg_time.tv_usec * 1000;
+      }
+      else
+      {
+        tracker->accel_msg_.header.stamp = nh->now();
+      }
 
       tracker->accel_msg_.accel.linear.x = tracker_accel.acc[0] * tracker->linear_scale_;
       tracker->accel_msg_.accel.linear.y = tracker_accel.acc[1] * tracker->linear_scale_;

@@ -96,14 +96,17 @@ namespace vrpn_client_ros
     geometry_msgs::msg::TwistStamped twist_msg_;
     geometry_msgs::msg::AccelStamped accel_msg_;
 
-    std::size_t server_time_offset_sample_count_{0};
-    long double server_time_offset_sum_ns_{0.0L};
-    std::int64_t server_to_ros_offset_ns_{0};
-    bool server_time_offset_ready_{false};
+    // VRPN twist timestamps use a different time origin from pose timestamps
+    // on the Nokov server.  Calibrate twist independently for each tracker so
+    // subscribing to twist can never change the established pose time path.
+    std::size_t twist_time_offset_sample_count_{0};
+    long double twist_time_offset_sum_ns_{0.0L};
+    std::int64_t twist_to_ros_offset_ns_{0};
+    bool twist_time_offset_ready_{false};
 
     void init(std::string tracker_name, rclcpp::Node::SharedPtr nh, bool create_mainloop_timer);
 
-    rclcpp::Time stamp_from_vrpn_time(const timeval &msg_time);
+    rclcpp::Time stamp_twist_from_vrpn_time(const timeval &msg_time);
 
     static void VRPN_CALLBACK handle_pose(void *userData, const vrpn_TRACKERCB tracker_pose);
 
