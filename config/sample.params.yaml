@@ -5,4 +5,4 @@ vrpn_client_node:
     frame_id: "world"
     use_server_time: true
     refresh_tracker_frequency: 1.0
-    update_frequency: 100.0
+    update_frequency: 250.0
